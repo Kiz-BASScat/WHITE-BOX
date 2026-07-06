@@ -8,6 +8,7 @@ import math
 import json
 import usb_cdc
 import neopixel_write
+
 ##############################################
 #LED設定
 ##############################################
@@ -19,14 +20,10 @@ led_pin.direction = digitalio.Direction.OUTPUT
 LED_DATA = bytearray(3)
 def led_on(mode):
     brightness = 0.1
-    if mode == 1:
-        r, g, b = 200, 0, 255
-    elif mode == 2:
-        r, g, b = 255, 0, 0
-    elif mode == 3:
-        r, g, b = 100, 255, 0
-    else:
-        r, g, b = 0, 0, 0      # 想定外の引数が来たら消灯（安全策）
+    if mode == 1:r, g, b = 200, 0, 255
+    elif mode == 2: r, g, b = 255, 0, 0
+    elif mode == 3: r, g, b = 0, 0, 255
+    else: r, g, b = 0, 0, 0 
     
     # 輝度を適用して整数に変換
     #RP2040-ZeroのGRB順の仕様に合わせて送信
@@ -48,12 +45,13 @@ def load_settings():
             return json.load(f)
     except(OSError, ValueError):
         return None
-def write_settings():
+def write_settings(data):
     try:
         with open(SETTING_FILE, "w") as f:
-            return json.load(f)
+            f.write(data)
+            return True
     except(OSError, ValueError):
-        return None
+        return False
     
 ##############################################
 #ハードウェア設定
@@ -117,7 +115,7 @@ class Mouse:
                 self.__with_button_report[0] = temp_button_code
                 self.__deadzone_sq = temp_deadzone ** 2
                 self.__speed = int(temp_speed * 10.24)
-
+                print("成功")
                 led_on(1)
 
             except (KeyError, ValueError) as e:
@@ -207,13 +205,13 @@ class Kbd:
             __Key(0x00, (0x00,)),#C2R0
             __Key(0x00, (0x00,)),#C3R0
             __Key(0x00, (0x00,)),#C0R1
-            __Key(0x00, (0x4E,)),#C1R1
-            __Key(0x00, (0x52,)),#C2R1
-            __Key(0x00, (0x4B,)),#C3R1
+            __Key(0x00, (0x00,)),#C1R1
+            __Key(0x00, (0x00,)),#C2R1
+            __Key(0x00, (0x00,)),#C3R1
             __Key(0x00, (0x00,)),#C0R2
-            __Key(0x00, (0x4F,)),#C1R2
-            __Key(0x00, (0x51,)),#C2R2
-            __Key(0x00, (0x50,)) #C3R2
+            __Key(0x00, (0x00,)),#C1R2
+            __Key(0x00, (0x00,)),#C2R2
+            __Key(0x00, (0x00,)) #C3R2
         )
         self.is_holding = False
         self.current_key_number = None
@@ -241,6 +239,7 @@ class Kbd:
                         temp_keys.append(__Key(key_data["mod"], tuple(key_data["codes"])))
 
                 self.__keys = tuple(temp_keys)
+                print("成功")
                 led_on(1)
 
             except (KeyError, ValueError) as e:
@@ -278,25 +277,56 @@ class Kbd:
         self.is_holding = False
         self.send_report()
 
+serial = usb_cdc.data if usb_cdc.data is not None else usb_cdc.console
+if serial:
+    serial.timeout = 0.2
+
+CMD_GET = "GET_SETTING"
+CMD_SAVE = "SAVE_SETTING"
+
 tStart = time.monotonic()
 s_time = time.monotonic()
 mouse = Mouse()
 kbd = Kbd()
 led_on(1)
 while True:
-    if  time.monotonic() - s_time > 10:
-        kbd.reset()
-        mouse.send_release()
-        print("10秒経過 てすとおわり")
-        break
+    #PCからの命令チェック
+    if serial and serial.in_waiting > 0:
 
-    if kbd.is_holding:
-        kbd.update()
-    elif mouse.is_moving:
-        mouse.update()
+        try:
+            row_line = serial.readline()
+            if row_line:
+                line = row_line.decode("utf-8").strip()
+                
+                if CMD_GET in line:
+                    led_on(3)
+                    serial.reset_output_buffer()
+                    current_settings = load_settings()
+                    if current_settings:
+                        serial.write((json.dumps(current_settings) + "\n").encode("utf-8"))
+                    else:
+                        serial.write(b"ERROR:LOAD_FAILED\n")
+                    led_on(1)
+                elif line.startswith(CMD_SAVE):
+                    led_on(3)
+                    json_str = line[len(CMD_SAVE):]
+                    new_settings = json.loads(json_str)
+                    if write_settings(json_str):
+                        serial.write(b"SUCCESS\n")
+                        mouse.config_update()
+                        kbd.config_update()
+                    else:
+                        serial.write(b"ERROR:WRITE_FAILED\n")
+                    led_on(1)
+        except:
+            if serial: serial.write(b"ERROR:EXCEPTION\n")
+            led_on(2)
+
+    #入力処理
+    if kbd.is_holding: kbd.update()
+    elif mouse.is_moving: mouse.update()
     else:
         kbd.update()
-        if not kbd.is_holding:
-            mouse.update()
+        if not kbd.is_holding: mouse.update()
 
     time.sleep(0.01)
