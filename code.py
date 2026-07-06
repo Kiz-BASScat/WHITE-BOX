@@ -59,11 +59,11 @@ def write_settings(data):
 class __Key:
     def __init__(self, modifier, keycodes: tuple):
         self.report = bytearray(8)
-        if len(keycodes) < 6: 
-            self.report[0] = int(modifier)
+        self.report[0] = int(modifier)
+        if len(keycodes) < 7: 
             for i, code in enumerate(keycodes):
                 self.report[2 + i] = int(code)
-
+        print(self.report)
 class Mouse:
     def __init__(self):
         self.__device = usb_hid.devices[1]
@@ -190,7 +190,7 @@ class Mouse:
         #DEADZONE外
         else:
             #現在の速度を送信, 操作中フラグを立てる
-            self.send_key()
+            if not self.is_moving: self.send_key()
             self.send_moving(dx, dy)
             self.__stop_timer = None
             self.is_moving = True
@@ -235,11 +235,13 @@ class Kbd:
             ]
             try:
                 for key_name in keys_order:
+                        print(settings["key_settings"][key_name])
                         key_data = settings["key_settings"][key_name]
                         temp_keys.append(__Key(key_data["mod"], tuple(key_data["codes"])))
 
                 self.__keys = tuple(temp_keys)
                 print("成功")
+                
                 led_on(1)
 
             except (KeyError, ValueError) as e:
@@ -258,6 +260,7 @@ class Kbd:
         if self.current_key_number is None:
             self.__device.send_report(b'\x00' * 8)
         else:
+            print(self.__keys[self.current_key_number].report)
             self.__device.send_report(self.__keys[self.current_key_number].report)
 
     def update(self):
